@@ -119,7 +119,10 @@ dependencies {
     //連携mod
     implementation fg.deobf("curse.maven:timeless-and-classics-zero-1028108:7401617")
     implementation fg.deobf("appeng:appliedenergistics2-forge:15.4.8")
-    implementation fg.deobf("curse.maven:aeinfinitybooster-559313:6482257")
+    // AE Infinity Booster changes the types of its internal fields between versions (crash: NoSuchFieldError),
+    // so do not compile against it; the integration only compares registry IDs.
+    // 2.x (e.g. 9295403 = 2.1.0) cannot be used in this dev environment: its mixins target Minecraft by SRG name without a refmap.
+    runtimeOnly fg.deobf("curse.maven:aeinfinitybooster-559313:6482257")
     implementation fg.deobf("curse.maven:create-sentry-mechanical-arm-1411575:7491255")
 
     implementation(fg.deobf("com.simibubi.create:create-${minecraft_version}:${create_version}:slim") { transitive = false })
