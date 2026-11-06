@@ -16,12 +16,10 @@
       "item": "ae2:controller"
     },
     "d": {
-      "type": "neoforge:components",
+      "type": "tacz:nbt",
       "items": "tacz:ammo_box",
-      "components": {
-        "minecraft:custom_data": "{Level: 2}"
-      },
-      "strict": false
+      "nbt": "{Level: 2}",
+      "partial": true
     },
     "e": {
       "item": "ae2:singularity"
