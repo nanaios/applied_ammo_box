@@ -96,8 +96,10 @@ dependencies {
 
     implementation "maven.modrinth:tacz-1.21.1:${tacz_version}"
     implementation "org.appliedenergistics:appliedenergistics2:${ae2_version}"
-    implementation "maven.modrinth:aeinfinitybooster:${ae_infinity_booster_version}"
 
+    // AE Infinity Booster changes the types of its internal fields between versions (crash: NoSuchFieldError),
+    // so do not compile against it; the integration only compares registry IDs.
+    localRuntime "maven.modrinth:aeinfinitybooster:${ae_infinity_booster_version}"
     localRuntime "maven.modrinth:curios-for-ammo-box:${curios_ammo_version}"
 
     compileOnly "mezz.jei:jei-${minecraft_version}-neoforge-api:${jei_version}"
