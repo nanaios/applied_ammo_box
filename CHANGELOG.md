@@ -7,7 +7,7 @@
 1.21.1-1.2.3-hotfix2 までの履歴は Modrinth・CurseForge の各バージョンのページにあります。
 -->
 
-## Unreleased
+## 1.21.1-1.2.4
 
 - Fixed a crash with AE Infinity Booster 2.x ([#13](https://github.com/nanaios/applied_ammo_box/issues/13))
 - Fixed Wireless Ammo Box not being craftable with a previously used diamond ammo box ([#14](https://github.com/nanaios/applied_ammo_box/issues/14))
