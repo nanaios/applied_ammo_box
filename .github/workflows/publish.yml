@@ -1,0 +1,264 @@
+# Modrinth・CurseForge・GitHub Releases への自動公開
+#
+# release/1.20.1 ブランチに push されると（1.20.1 をマージしたときなど）、ビルドして公開します。
+# - バージョン: gradle.properties の mod_version
+# - 更新履歴: CHANGELOG.md の「## <mod_version>」の節。無いときは何も公開せずに失敗します。
+# - そのバージョンが既に Modrinth にあるときは何もしません。mod_version を上げずに push しても二重には公開されません。
+#
+# 途中で失敗したとき（Modrinth には出たが CurseForge で失敗した、など）は、Actions タブの「Run workflow」で
+# ブランチに release/1.20.1 を選び、まだ公開されていない所だけにチェックを入れて実行してください。
+#
+# 必要なリポジトリシークレット（Settings → Secrets and variables → Actions）:
+# - MODRINTH_TOKEN: Modrinth の Personal Access Token（権限は Create versions だけでよい）
+# - CURSEFORGE_TOKEN: CurseForge の API トークン（https://authors.curseforge.com/#/settings/api-tokens）
+name: Publish
+
+on:
+  push:
+    branches:
+      - release/1.20.1
+  workflow_dispatch:
+    inputs:
+      modrinth:
+        description: Modrinth に公開する
+        type: boolean
+        default: false
+      curseforge:
+        description: CurseForge に公開する
+        type: boolean
+        default: false
+      github:
+        description: GitHub Release を作成する
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MODRINTH_ID: VQOi9K8E
+  CURSEFORGE_ID: 1338332
+
+jobs:
+  check:
+    name: Check
+    # 手動実行でも release/1.20.1 以外からは公開しない
+    if: github.ref == 'refs/heads/release/1.20.1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mod_id: ${{ steps.props.outputs.mod_id }}
+      version: ${{ steps.props.outputs.version }}
+      gradle_version: ${{ steps.props.outputs.gradle_version }}
+      modrinth: ${{ steps.targets.outputs.modrinth }}
+      curseforge: ${{ steps.targets.outputs.curseforge }}
+      github: ${{ steps.targets.outputs.github }}
+      publish: ${{ steps.targets.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Read gradle.properties
+        id: props
+        run: |
+          prop() {
+            tr -d '\r' < gradle.properties | sed -n "/^$1[[:space:]]*=/{s/^[^=]*=[[:space:]]*//;s/[[:space:]]*\$//;p;q;}"
+          }
+          mod_id="$(prop mod_id)"
+          version="$(prop mod_version)"
+          # リポジトリに gradlew が無いので、Gradle のバージョンは wrapper の設定から読む
+          gradle_version="$(tr -d '\r' < gradle/wrapper/gradle-wrapper.properties | sed -nE 's#^distributionUrl=.*/gradle-(.+)-(bin|all)\.zip$#\1#p')"
+          if [ -z "$mod_id" ] || [ -z "$version" ] || [ -z "$gradle_version" ]; then
+            echo "::error::mod_id・mod_version・Gradle のバージョンを読み取れませんでした。"
+            exit 1
+          fi
+          echo "mod_id=$mod_id, version=$version, gradle=$gradle_version"
+          {
+            echo "mod_id=$mod_id"
+            echo "version=$version"
+            echo "gradle_version=$gradle_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Decide where to publish
+        id: targets
+        env:
+          VERSION: ${{ steps.props.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+          WANT_MODRINTH: ${{ inputs.modrinth }}
+          WANT_CURSEFORGE: ${{ inputs.curseforge }}
+          WANT_GITHUB: ${{ inputs.github }}
+          HAS_MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN != '' }}
+          HAS_CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN != '' }}
+        run: |
+          # Modrinth に同じバージョン番号があるか（200: ある、404: ない）
+          status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -A "${GITHUB_REPOSITORY} publish workflow (GitHub Actions)" \
+            "https://api.modrinth.com/v2/project/${MODRINTH_ID}/version/${VERSION}")"
+          case "$status" in
+            200) on_modrinth=true ;;
+            404) on_modrinth=false ;;
+            *)
+              echo "::error::Modrinth の確認に失敗しました (HTTP ${status})。"
+              exit 1
+              ;;
+          esac
+
+          if gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            on_github=true
+          else
+            on_github=false
+          fi
+
+          if [ "$MANUAL" = true ]; then
+            modrinth="$WANT_MODRINTH"
+            curseforge="$WANT_CURSEFORGE"
+            github="$WANT_GITHUB"
+            if [ "$modrinth" = true ] && [ "$on_modrinth" = true ]; then
+              echo "::error::${VERSION} は Modrinth に公開済みです。Modrinth のチェックを外して実行してください。"
+              exit 1
+            fi
+          elif [ "$on_modrinth" = true ]; then
+            echo "::notice::${VERSION} は Modrinth に公開済みなので、何もしません。公開するには mod_version を上げてください。"
+            modrinth=false
+            curseforge=false
+            github=false
+          else
+            modrinth=true
+            curseforge=true
+            github=true
+          fi
+
+          if [ "$github" = true ] && [ "$on_github" = true ]; then
+            echo "::notice::GitHub Release v${VERSION} は既にあるので、作成しません。"
+            github=false
+          fi
+
+          if [ "$modrinth" = true ] && [ "$HAS_MODRINTH_TOKEN" != true ]; then
+            echo "::error::リポジトリシークレット MODRINTH_TOKEN が設定されていません。"
+            exit 1
+          fi
+          if [ "$curseforge" = true ] && [ "$HAS_CURSEFORGE_TOKEN" != true ]; then
+            echo "::error::リポジトリシークレット CURSEFORGE_TOKEN が設定されていません。"
+            exit 1
+          fi
+
+          if [ "$modrinth" = true ] || [ "$curseforge" = true ] || [ "$github" = true ]; then
+            publish=true
+          else
+            publish=false
+          fi
+          echo "modrinth=$modrinth, curseforge=$curseforge, github=$github"
+          {
+            echo "modrinth=$modrinth"
+            echo "curseforge=$curseforge"
+            echo "github=$github"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+
+  # ビルドするジョブには公開用のトークンを渡さない
+  build:
+    name: Build
+    needs: check
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MOD_ID: ${{ needs.check.outputs.mod_id }}
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Extract changelog
+        run: |
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::error::CHANGELOG.md がありません。"
+            exit 1
+          fi
+          mkdir -p dist
+          # 「## <version>」（「## [<version>]」でも可）の次の行から、次の「## 」見出しの手前までを取り出す
+          tr -d '\r' < CHANGELOG.md | awk -v v="$VERSION" '
+            $1 == "##" { if (found) exit; if ($2 == v || $2 == "[" v "]") { found = 1; next } }
+            found { lines[++n] = $0 }
+            END {
+              s = 1; while (s <= n && lines[s] ~ /^[ \t]*$/) s++
+              e = n; while (e >= s && lines[e] ~ /^[ \t]*$/) e--
+              for (i = s; i <= e; i++) print lines[i]
+            }' > dist/CHANGELOG.md
+          if [ ! -s dist/CHANGELOG.md ]; then
+            echo "::error file=CHANGELOG.md::CHANGELOG.md に「## ${VERSION}」の節が無いか、中身が空です。"
+            exit 1
+          fi
+          cat dist/CHANGELOG.md
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: ${{ needs.check.outputs.gradle_version }}
+
+      - name: Build
+        run: gradle build
+
+      - name: Collect the jar
+        run: cp "build/libs/${MOD_ID}-${VERSION}.jar" dist/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # GitHub Release とタグの作成
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      JAR: ${{ needs.check.outputs.mod_id }}-${{ needs.check.outputs.version }}.jar
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: dist
+
+      # 公開用のトークンを渡すので、サードパーティの Action はコミットで固定する
+      - uses: Kira-NT/mc-publish@c23376546a97f5ba7984e94445da359459b14419 # v3.3.2
+        with:
+          # トークンが空の公開先は mc-publish が飛ばす
+          modrinth-id: ${{ env.MODRINTH_ID }}
+          modrinth-token: ${{ needs.check.outputs.modrinth == 'true' && secrets.MODRINTH_TOKEN || '' }}
+          modrinth-featured: false # これまでのバージョンと同じく Featured にしない
+          modrinth-unfeature-mode: none # ほかのバージョンの Featured も外さない
+          curseforge-id: ${{ env.CURSEFORGE_ID }}
+          curseforge-token: ${{ needs.check.outputs.curseforge == 'true' && secrets.CURSEFORGE_TOKEN || '' }}
+          curseforge-name: ${{ env.JAR }} # CurseForge の表示名はこれまでどおりファイル名
+          github-token: ${{ needs.check.outputs.github == 'true' && github.token || '' }}
+          github-tag: v${{ env.VERSION }}
+          github-commitish: ${{ github.sha }}
+          files: dist/${{ env.JAR }}
+          name: '[Tacz] Applied Ammo Box ${{ env.VERSION }}'
+          version: ${{ env.VERSION }}
+          changelog-file: dist/CHANGELOG.md
+          loaders: forge
+          game-versions: 1.20.1
+          environment: client | server
+          java: 17
+          # mod ID(種類){プラットフォーム:スラッグ}。スラッグを書かなければ mod ID がそのまま使われる
+          dependencies: |
+            ae2(required){curseforge:applied-energistics-2}
+            tacz(required){modrinth:timeless-and-classics-zero}{curseforge:timeless-and-classics-zero}
+            curios-for-ammo-box(optional)
