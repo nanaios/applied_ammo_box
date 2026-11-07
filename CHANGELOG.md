@@ -7,6 +7,6 @@
 1.20.1-1.2.3 までの履歴は Modrinth・CurseForge の各バージョンのページにあります。
 -->
 
-## Unreleased
+## 1.20.1-1.2.4
 
 - Fixed a crash with AE Infinity Booster 2.x ([#13](https://github.com/nanaios/applied_ammo_box/issues/13))
