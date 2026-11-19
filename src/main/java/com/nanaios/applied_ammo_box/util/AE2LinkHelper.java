@@ -41,6 +41,22 @@ public class AE2LinkHelper {
     /// @param count   更新する弾薬数の上限
     /// @param mode    抽出モード
     public static ActionResult extractionAmmo(Level level, BlockPos pos, ItemStack ammoBox, ItemStack ammo, int count, Actionable mode) {
+        return transferAmmo(level, pos, ammoBox, ammo, count, mode, false);
+    }
+
+    /// 弾薬をAE2ネットワークへ搬入する
+    /// 返り値の弾薬数は実際に搬入できた数
+    ///
+    /// @param pos     弾薬箱の座標
+    /// @param ammoBox 弾薬箱のItemStack
+    /// @param ammo    弾薬のItemStack
+    /// @param count   搬入する弾薬数
+    /// @param mode    搬入モード
+    public static ActionResult insertAmmo(Level level, BlockPos pos, ItemStack ammoBox, ItemStack ammo, int count, Actionable mode) {
+        return transferAmmo(level, pos, ammoBox, ammo, count, mode, true);
+    }
+
+    private static ActionResult transferAmmo(Level level, BlockPos pos, ItemStack ammoBox, ItemStack ammo, int count, Actionable mode, boolean insert) {
         // 座標を取得
         GlobalPos linkPos = AE2LinkHelper.getLinkedPosition(ammoBox);
         if (linkPos == null) return new ActionResult(ActionResult.Status.DEVICE_NOT_LINKED, 0);
@@ -60,12 +76,15 @@ public class AE2LinkHelper {
         // 弾薬のデータを生成
         IActionSource source = new BaseActionSource();
         AEKey key = AEItemKey.of(ammo);
-        if (key == null) return new ActionResult(ActionResult.Status.SUCCESS, 0);
+        if (key == null || count <= 0) return new ActionResult(ActionResult.Status.SUCCESS, 0);
 
+        ChannelPowerSrc powerSrc = new ChannelPowerSrc(node, grid.getEnergyService());
         // 弾薬の数を取得
-        int ammoCount = (int) StorageHelper.poweredExtraction(new ChannelPowerSrc(node, grid.getEnergyService()), grid.getStorageService().getInventory(), key, count, source, mode);
+        long amount = insert
+                ? StorageHelper.poweredInsert(powerSrc, grid.getStorageService().getInventory(), key, count, source, mode)
+                : StorageHelper.poweredExtraction(powerSrc, grid.getStorageService().getInventory(), key, count, source, mode);
         // 弾薬数を0以上に補正
-        ammoCount = Math.max(0, ammoCount);
+        int ammoCount = (int) Math.max(0, Math.min(amount, Integer.MAX_VALUE));
 
         return new ActionResult(ActionResult.Status.SUCCESS, ammoCount);
     }
