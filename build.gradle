@@ -103,6 +103,14 @@ repositories {
         url = "https://maven.theillusivec4.top/"
     }
 
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+        content {
+            includeGroup "maven.modrinth"
+        }
+    }
+
     maven { url = "https://maven.createmod.net" } // Create, Ponder, Flywheel
     maven { url = "https://maven.ithundxr.dev/mirror" } // Registrate
     maven { url = "https://raw.githubusercontent.com/Fuzss/modresources/main/maven/" } // ForgeConfigAPIPort
@@ -117,7 +125,8 @@ dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
 
     //連携mod
-    implementation fg.deobf("curse.maven:timeless-and-classics-zero-1028108:7401617")
+    // tacz 1.2.0-hotfix https://modrinth.com/mod/timeless-and-classics-zero/version/4yAbMXbz
+    implementation fg.deobf("maven.modrinth:SzzJttH8:4yAbMXbz")
     implementation fg.deobf("appeng:appliedenergistics2-forge:15.4.8")
     // AE Infinity Booster changes the types of its internal fields between versions (crash: NoSuchFieldError),
     // so do not compile against it; the integration only compares registry IDs.

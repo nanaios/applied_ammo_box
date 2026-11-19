@@ -20,11 +20,13 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResultHolder;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.SlotAccess;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ClickAction;
 import net.minecraft.world.inventory.Slot;
@@ -68,7 +70,8 @@ public class WirelessAmmoBoxItem extends AmmoBoxItem implements IDefaultAEItemPo
 
         // エネルギーが無い場合は弾薬のデータをリセットする
         if(this.getAECurrentPower(stack) <= 0) {
-            setAmmoCount(stack,0);
+            // データのみをリセットする (オーバーライドした setAmmoCount を呼ぶと AE2 ネットワークから弾薬が抜き取られてしまう)
+            super.setAmmoCount(stack, 0);
             setAmmoId(stack, DefaultAssets.EMPTY_AMMO_ID);
             return;
         }
@@ -133,8 +136,12 @@ public class WirelessAmmoBoxItem extends AmmoBoxItem implements IDefaultAEItemPo
     @Nullable
     public Level getLevel(ItemStack stack) {
         CompoundTag tag = stack.getTag();
+        // クライアント側 (専用サーバー接続時) ではサーバーが存在しない
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        if (server == null) return null;
+
         if (tag != null && tag.contains(NBT_LEVEL_KEY)) {
-            return ServerLifecycleHooks.getCurrentServer().getLevel(
+            return server.getLevel(
                     ResourceKey.create(Registries.DIMENSION, ResourceLocation.parse(tag.getString(NBT_LEVEL_KEY)))
             );
         }
@@ -223,19 +230,59 @@ public class WirelessAmmoBoxItem extends AmmoBoxItem implements IDefaultAEItemPo
         //弾薬が減少している個数を計算
         int oldCount = this.getAmmoCount(ammoBox);
         int diff = oldCount - count;
-        if (diff <= 0) return;
+        if (diff == 0) return;
 
         // 弾薬箱が存在するレベルと座標を取得
         BlockPos pos = getPos(ammoBox);
         Level level = getLevel(ammoBox);
         if (level == null || pos == null) return;
 
-        // 弾薬をAE2ネットワークから取り出す
         ItemStack ammo = AmmoItemBuilder.create().setId(getAmmoId(ammoBox)).setCount(1).build();
+
+        // 弾薬数が増加している場合 (TACZ 1.2.0 以降の弾薬の取り出しで弾薬箱へ弾薬が戻される場合など)
+        if (diff < 0) {
+            returnAmmo(level, pos, ammoBox, ammo, -diff);
+            return;
+        }
+
+        // 弾薬をAE2ネットワークから取り出す
         AE2LinkHelper.extractionAmmo(level, pos, ammoBox, ammo, diff, Actionable.MODULATE);
 
         // エネルギーを消費
         extractAEPower(ammoBox, AppliedAmmoBoxConfig.AMMO_BOX_USE_POWER_PER_AMMO.get() * diff, Actionable.MODULATE);
+
+        // 弾薬数を再取得して設定
+        updateAmmoCount(ammoBox);
+    }
+
+    /// 弾薬箱へ戻された弾薬をAE2ネットワークへ搬入する
+    /// 搬入しきれなかった弾薬は消失しないよう弾薬箱の座標にドロップする
+    ///
+    /// @param level   弾薬箱が存在するレベル
+    /// @param pos     弾薬箱の座標
+    /// @param ammoBox 弾薬箱のItemStack
+    /// @param ammo    弾薬のItemStack
+    /// @param count   戻された弾薬数
+    private void returnAmmo(Level level, BlockPos pos, ItemStack ammoBox, ItemStack ammo, int count) {
+        // 弾薬をAE2ネットワークへ搬入する
+        int inserted = AE2LinkHelper.insertAmmo(level, pos, ammoBox, ammo, count, Actionable.MODULATE).count();
+
+        // エネルギーを消費
+        if (inserted > 0) {
+            extractAEPower(ammoBox, AppliedAmmoBoxConfig.AMMO_BOX_USE_POWER_PER_AMMO.get() * inserted, Actionable.MODULATE);
+        }
+
+        // 搬入しきれなかった弾薬をドロップする
+        int remaining = count - inserted;
+        int maxStackSize = Math.max(1, ammo.getMaxStackSize());
+        while (remaining > 0) {
+            int dropCount = Math.min(remaining, maxStackSize);
+            ItemStack drop = ammo.copyWithCount(dropCount);
+            ItemEntity entity = new ItemEntity(level, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, drop);
+            entity.setNoPickUpDelay();
+            level.addFreshEntity(entity);
+            remaining -= dropCount;
+        }
 
         // 弾薬数を再取得して設定
         updateAmmoCount(ammoBox);
